@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>PLATEAU Wireframe City (All Data)</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #000000;
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      color: #ffffff;
+    }
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1;
+    }
+
+    /* 中央クロスヘア（マイクラ・スイススタイル共通） */
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 20px;
+      font-weight: 300;
+      color: rgba(255, 255, 255, 0.75);
+      pointer-events: none;
+      z-index: 15;
+      line-height: 1;
+    }
+
+    /* ローダー表示 */
+    #loader {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      z-index: 30;
+      pointer-events: none;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 12px 24px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* HUD操作ガイド */
+    #hud-info {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      font-size: 11px;
+      line-height: 1.7;
+      letter-spacing: 0.08em;
+      opacity: 0.65;
+      z-index: 10;
+      pointer-events: none;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 10px 14px;
+      border-left: 2px solid #ffffff;
+    }
+
+    /* コントローラーパネル（スマホ・タッチ用） */
+    #controller-panel {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      gap: 16px;
+      z-index: 20;
+    }
+    .pad {
+      display: grid;
+      gap: 6px;
+    }
+    .d-pad {
+      grid-template-columns: repeat(3, 46px);
+      grid-template-rows: repeat(3, 46px);
+    }
+    .v-pad {
+      grid-template-columns: 46px;
+      grid-template-rows: repeat(2, 46px);
+      align-self: end;
+    }
+    .btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      border-radius: 2px;
+    }
+    .btn:active {
+      background: #ffffff;
+      color: #000000;
+    }
+    #btn-w { grid-column: 2; grid-row: 1; }
+    #btn-a { grid-column: 1; grid-row: 2; }
+    #btn-s { grid-column: 2; grid-row: 2; }
+    #btn-d { grid-column: 3; grid-row: 2; }
+    #btn-up { grid-row: 1; }
+    #btn-down { grid-row: 2; }
+
+    /* UIトグルボタン */
+    #ui-toggle {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      font-size: 11px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 6px 10px;
+      background: rgba(0,0,0,0.6);
+      cursor: pointer;
+      z-index: 20;
+    }
+  </style>
+
+  <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+  <div id="loader">INITIALIZING SPATIAL DATA...</div>
+  <div id="crosshair">+</div>
+
+  <div id="hud-info">
+    CLICK CANVAS : LOCK MOUSE (FPS VIEW)<br>
+    MOVE : W / A / S / D<br>
+    FLY UP : SPACE<br>
+    DESCEND : SHIFT<br>
+    RUN : CTRL + MOVE
+  </div>
+
+  <div id="ui-toggle">HIDE UI</div>
+
+  <!-- スマホ用オンスクリーンキー -->
+  <div id="controller-panel">
+    <div class="pad d-pad">
+      <div class="btn" id="btn-w">W</div>
+      <div class="btn" id="btn-a">A</div>
+      <div class="btn" id="btn-s">S</div>
+      <div class="btn" id="btn-d">D</div>
+    </div>
+    <div class="pad v-pad">
+      <div class="btn" id="btn-up">UP</div>
+      <div class="btn" id="btn-down">DN</div>
+    </div>
+  </div>
+
+  <div id="canvas-container"></div>
+
+  <script>
+    window.onload = function () {
+      const container = document.getElementById('canvas-container');
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000000);
+
+      // カメラ設定（画角65度・視覚的な立体感を強調）
+      const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 8000);
+      camera.rotation.order = 'YXZ';
+
+      // 初期スポーン位置（地形に埋まらないように高さ25m）
+      camera.position.set(0, 25, 60);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      container.appendChild(renderer.domElement);
+
+      const cityGroup = new THREE.Group();
+      scene.add(cityGroup);
+
+      // ソリッド遮蔽（黒面）＋白線輪郭
+      const blackMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+      const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+
+      const loader = new THREE.GLTFLoader();
+      
+      // 読み込む3つのファイル名を指定
+      const filesToLoad = ['./bldg.glb', './tran.glb', './dem.glb'];
+      let loadedCount = 0;
+
+      document.getElementById('loader').innerText = `LOADING DATA: 0 / ${filesToLoad.length}`;
+
+      // Promise.allを使って3つのファイルを並列で読み込む
+      Promise.all(filesToLoad.map(file => {
+        return new Promise((resolve, reject) => {
+          loader.load(
+            file,
+            function (gltf) {
+              gltf.scene.traverse(function (child) {
+                if (child.isMesh) {
+                  child.material = blackMaterial;
+                  const edges = new THREE.EdgesGeometry(child.geometry, 25);
+                  const line = new THREE.LineSegments(edges, edgeMaterial);
+                  child.add(line);
+                }
+              });
+              
+              cityGroup.add(gltf.scene); // 読み込んだモデルをグループにまとめる
+              loadedCount++;
+              document.getElementById('loader').innerText = `LOADING DATA: ${loadedCount} / ${filesToLoad.length}`;
+              resolve();
+            },
+            undefined, // 個別の進捗は省略
+            function (error) {
+              console.error(`Error loading ${file}:`, error);
+              reject(error);
+            }
+          );
+        });
+      })).then(() => {
+        // 全てのファイルが揃った後、グループ全体（建物＋道路＋地形）のバウンディングボックスを計算
+        const box = new THREE.Box3().setFromObject(cityGroup);
+        const center = box.getCenter(new THREE.Vector3());
+        
+        // 全体を一括で原点に移動し、底面をy=0に揃える
+        cityGroup.position.x = -center.x;
+        cityGroup.position.z = -center.z;
+        cityGroup.position.y = -box.min.y;
+
+        document.getElementById('loader').style.display = 'none';
+      }).catch(error => {
+        document.getElementById('loader').innerText = 'LOAD ERROR: Check console';
+      });
+
+      // ==========================================
+      // マインクラフト完全準拠の操作系
+      // ==========================================
+      let isLocked = false;
+      let pitch = 0;
+      let yaw = 0;
+
+      // クリックで画面ロック（マイクラと同じマウス操作開始）
+      container.addEventListener('click', () => {
+        container.requestPointerLock();
+      });
+
+      document.addEventListener('pointerlockchange', () => {
+        isLocked = document.pointerLockElement === container;
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isLocked) return;
+        const sensitivity = 0.0022;
+        yaw -= e.movementX * sensitivity;
+        pitch -= e.movementY * sensitivity;
+
+        // 垂直首振りの制限（真上・真下）
+        pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, pitch));
+
+        camera.rotation.x = pitch;
+        camera.rotation.y = yaw;
+      });
+
+      // キー入力管理
+      const keys = { w: false, a: false, s: false, d: false, space: false, shift: false, ctrl: false };
+
+      window.addEventListener('keydown', (e) => {
+        const k = e.key.toLowerCase();
+        if (k === 'w') keys.w = true;
+        if (k === 'a') keys.a = true;
+        if (k === 's') keys.s = true;
+        if (k === 'd') keys.d = true;
+        if (e.code === 'Space') { keys.space = true; e.preventDefault(); }
+        if (e.key === 'Shift') { keys.shift = true; }
+        if (e.key === 'Control') { keys.ctrl = true; }
+      });
+
+      window.addEventListener('keyup', (e) => {
+        const k = e.key.toLowerCase();
+        if (k === 'w') keys.w = false;
+        if (k === 'a') keys.a = false;
+        if (k === 's') keys.s = false;
+        if (k === 'd') keys.d = false;
+        if (e.code === 'Space') { keys.space = false; }
+        if (e.key === 'Shift') { keys.shift = false; }
+        if (e.key === 'Control') { keys.ctrl = false; }
+      });
+
+      // スマホ・ボタン連携
+      const bindBtn = (id, key) => {
+        const el = document.getElementById(id);
+        const start = (e) => { e.preventDefault(); keys[key] = true; };
+        const end = (e) => { e.preventDefault(); keys[key] = false; };
+        el.addEventListener('mousedown', start);
+        el.addEventListener('mouseup', end);
+        el.addEventListener('mouseleave', end);
+        el.addEventListener('touchstart', start, { passive: false });
+        el.addEventListener('touchend', end, { passive: false });
+      };
+      bindBtn('btn-w', 'w');
+      bindBtn('btn-s', 's');
+      bindBtn('btn-a', 'a');
+      bindBtn('btn-d', 'd');
+      bindBtn('btn-up', 'space');
+      bindBtn('btn-down', 'shift');
+
+      // UIトグル機能
+      const uiToggle = document.getElementById('ui-toggle');
+      let uiVisible = true;
+      uiToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        uiVisible = !uiVisible;
+        document.getElementById('controller-panel').style.display = uiVisible ? 'flex' : 'none';
+        document.getElementById('hud-info').style.display = uiVisible ? 'block' : 'none';
+        uiToggle.innerText = uiVisible ? 'HIDE UI' : 'SHOW UI';
+      });
+
+      // スマホ向けタッチスワイプ（画面ドラッグ視点移動）
+      let touchStart = { x: 0, y: 0 };
+      window.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1 && !isLocked) {
+          touchStart.x = e.touches[0].clientX;
+          touchStart.y = e.touches[0].clientY;
+        }
+      }, { passive: true });
+      window.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 1 && !isLocked) {
+          const dx = e.touches[0].clientX - touchStart.x;
+          const dy = e.touches[0].clientY - touchStart.y;
+          yaw -= dx * 0.005;
+          pitch -= dy * 0.005;
+          pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, pitch));
+          camera.rotation.x = pitch;
+          camera.rotation.y = yaw;
+          touchStart.x = e.touches[0].clientX;
+          touchStart.y = e.touches[0].clientY;
+        }
+      }, { passive: true });
+
+      // リサイズ
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // 移動・レンダリングループ
+      const clock = new THREE.Clock();
+      function animate() {
+        requestAnimationFrame(animate);
+        const delta = clock.getDelta();
+
+        // 移動速度（Ctrlでダッシュ倍速）
+        let speed = (keys.ctrl ? 90 : 40) * delta;
+
+        // 水平方向の向きベクトル（カメラが見ている方向）
+        const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+        const side = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+
+        // WASD 移動
+        if (keys.w) camera.position.addScaledVector(forward, speed);
+        if (keys.s) camera.position.addScaledVector(forward, -speed);
+        if (keys.a) camera.position.addScaledVector(side, -speed);
+        if (keys.d) camera.position.addScaledVector(side, speed);
+
+        // マイクラ準拠の垂直移動（SPACE: 上昇 / SHIFT: 下降）
+        if (keys.space) camera.position.y += speed;
+        if (keys.shift) camera.position.y = Math.max(1.5, camera.position.y - speed);
+
+        renderer.render(scene, camera);
+      }
+      animate();
+    };
+  </script>
+</body>
+</html>
